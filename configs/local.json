@@ -1,5 +1,5 @@
 {
-    "prompts": ["a painting of a potato"],
+    "prompts": ["a painting of a house"],
     "image_prompts": [],
     "max_iterations": 250,
     "save_freq": 50,

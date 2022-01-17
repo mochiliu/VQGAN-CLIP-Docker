@@ -12,6 +12,7 @@ import numpy as np
 from PIL import Image
 
 from tqdm import tqdm
+#from tqdm.notebook import trange, tqdm
 
 from core.schemas import Config
 from core.clip import clip
@@ -22,7 +23,7 @@ from core.utils.prompt import Prompt, parse_prompt
 from core.utils.gradients import ClampWithGrad, vector_quantize
 
 
-PARAMS: Config = None
+#PARAMS: Config = None
 DEVICE = torch.device(os.environ.get("DEVICE", 'cuda' if torch.cuda.is_available() else 'cpu'))
 NORMALIZE = Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
                       std=[0.26862954, 0.26130258, 0.27577711], device=DEVICE)
@@ -34,7 +35,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def initialize_image(model):
+def initialize_image(model,PARAMS):
     f = 2**(model.decoder.num_resolutions - 1)
     toksX, toksY = PARAMS.size[0] // f, PARAMS.size[1] // f
     sideX, sideY = toksX * f, toksY * f
@@ -64,7 +65,7 @@ def initialize_image(model):
     return z
 
 
-def tokenize(model, perceptor, make_cutouts):
+def tokenize(model, perceptor, make_cutouts, PARAMS):
     f = 2**(model.decoder.num_resolutions - 1)
     toksX, toksY = PARAMS.size[0] // f, PARAMS.size[1] // f
     sideX, sideY = toksX * f, toksY * f
@@ -92,7 +93,7 @@ def tokenize(model, perceptor, make_cutouts):
     return prompts
 
 
-def synth(z, *, model):
+def synth(z, PARAMS, *, model):
     z_q = vector_quantize(z.movedim(1, 3), model.quantize.embedding.weight).movedim(3, 1)
     z_q = ClampWithGrad.apply(model.decode(z_q).add(1).div(2), 0, 1)
 
@@ -103,10 +104,10 @@ def synth(z, *, model):
 
 
 @torch.no_grad()
-def checkin(z, losses, **kwargs):
+def checkin(z, losses, PARAMS, **kwargs):
     losses_str = ', '.join(f'{loss.item():g}' for loss in losses)
     tqdm.write(f"step: {kwargs['step']}, loss: {sum(losses).item():g}, losses: {losses_str}")
-    out = synth(z, model=kwargs['model'])
+    out = synth(z, PARAMS, model=kwargs['model'])
 
     filename = "output"
     if len(PARAMS.prompts):
@@ -116,8 +117,8 @@ def checkin(z, losses, **kwargs):
     TF.to_pil_image(out[0].cpu()).save(path)
 
 
-def ascend_txt(z, **kwargs):
-    out = synth(z, model=kwargs['model'])
+def ascend_txt(z, PARAMS, **kwargs):
+    out = synth(z, PARAMS, model=kwargs['model'])
     cutouts = kwargs['make_cutouts'](out)
     iii = kwargs['perceptor'].encode_image(NORMALIZE(cutouts)).float()
 
@@ -135,16 +136,17 @@ def ascend_txt(z, **kwargs):
     for prompt in kwargs['prompts']:
         result.append(prompt(iii))
 
-    TF.to_pil_image(out[0].cpu()).save(f"{PARAMS.output_dir}/steps/{step}.png")
-    return result
+    pil_image = TF.to_pil_image(out[0].cpu())
+    #pil_image.save(f"{PARAMS.output_dir}/steps/{step}.png")
+    return result, pil_image
 
 
-def train(z, **kwargs):
+def train(z, PARAMS, **kwargs):
     kwargs['optimizer'].zero_grad(set_to_none=True)
-    lossAll = ascend_txt(z, **kwargs)
+    lossAll, pil_image = ascend_txt(z, PARAMS, **kwargs)
 
     if kwargs['step'] % PARAMS.save_freq == 0 or kwargs['step'] == PARAMS.max_iterations:
-        checkin(z, lossAll, **kwargs)
+        checkin(z, lossAll, PARAMS, **kwargs)
 
     loss = sum(lossAll)
     loss.backward()
@@ -155,9 +157,9 @@ def train(z, **kwargs):
 
     with torch.no_grad():
         z.copy_(z.maximum(kwargs['z_min']).minimum(kwargs['z_max']))
+    return pil_image
 
-
-def main():
+def main(PARAMS,DEVICE):
     model = load_vqgan_model(PARAMS.vqgan_config, PARAMS.vqgan_checkpoint, PARAMS.models_dir).to(DEVICE)
     perceptor = clip.load(PARAMS.clip_model, device=DEVICE, root=PARAMS.models_dir)[0].eval().requires_grad_(False).to(DEVICE)
 
@@ -166,11 +168,11 @@ def main():
 
     z_min = model.quantize.embedding.weight.min(dim=0).values[None, :, None, None]
     z_max = model.quantize.embedding.weight.max(dim=0).values[None, :, None, None]
-    z = initialize_image(model)
+    z = initialize_image(model, PARAMS)
     z_orig = torch.zeros_like(z)
     z.requires_grad_(True)
 
-    prompts = tokenize(model, perceptor, make_cutouts)
+    prompts = tokenize(model, perceptor, make_cutouts, PARAMS)
     optimizer = get_optimizer(z, PARAMS.optimizer, PARAMS.step_size)
     scheduler = get_scheduler(optimizer, PARAMS.max_iterations, PARAMS.nwarm_restarts)
 
@@ -189,7 +191,7 @@ def main():
     try:
         for step in tqdm(range(PARAMS.max_iterations)):
             kwargs['step'] = step + 1
-            train(z, **kwargs)
+            train(z, PARAMS, **kwargs)
     except KeyboardInterrupt:
         pass
 
