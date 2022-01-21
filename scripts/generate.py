@@ -137,7 +137,8 @@ def ascend_txt(z, PARAMS, **kwargs):
         result.append(prompt(iii))
 
     pil_image = TF.to_pil_image(out[0].cpu())
-    #pil_image.save(f"{PARAMS.output_dir}/steps/{step}.png")
+    if step % 15 == 0:
+        pil_image.save(f"{PARAMS.output_dir}/steps/{step:04}.png")
     return result, pil_image
 
 
