@@ -54,8 +54,12 @@ def load_vqgan_model(config_path, checkpoint_path, model_dir=None):
         config = json.load(f)
 
     model = vqgan.VQModel(model_dir=model_dir, **config["params"])
+    print('1')
     model.eval().requires_grad_(False)
+    print(checkpoint_path)
+
     model.init_from_ckpt(checkpoint_path)
+    print('3')
 
     del model.loss
     return model

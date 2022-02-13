@@ -50,10 +50,7 @@ class VQModel(nn.Module):
             self.monitor = monitor
 
     def init_from_ckpt(self, path, ignore_keys=list()):
-        try:
-            sd = torch.load(path, map_location="cpu")["state_dict"]
-        except Exception:
-            sd = safe_load(path, map_location="cpu")["state_dict"]
+        sd = safe_load(path, map_location="cpu")["state_dict"]
 
         keys = list(sd.keys())
         for k in keys:
